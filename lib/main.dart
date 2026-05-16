@@ -65,7 +65,7 @@ class WattSliceApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const OnboardingScreen(),
+        home: const MainNavigationScreen(),
       ),
     );
   }

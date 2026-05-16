@@ -25,7 +25,7 @@ class EspTcpService extends ChangeNotifier {
   // Callback for AppState to process incoming data
   Function(Map<String, dynamic>)? onDataReceived;
 
-  EspTcpService({this.espIp = '192.168.43.100', this.espPort = 8081});
+  EspTcpService({this.espIp = '192.168.4.1', this.espPort = 8081});
 
   bool get isConnected => _isConnected;
   String get statusMessage => _statusMessage;

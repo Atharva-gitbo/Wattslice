@@ -827,7 +827,7 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(200);
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3000) delay(200);
   if (WiFi.status() == WL_CONNECTED) {
     wifiReady = true;
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
