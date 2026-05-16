@@ -35,25 +35,25 @@
 #include "esp_wifi.h"
 
 // ================= Configuration =================
-const char* WIFI_SSID = "AtharvaHotspot";
-const char* WIFI_PASSWORD = "hellothere69";
+const char* WIFI_SSID = "mimovrr";
+const char* WIFI_PASSWORD = "asdfghjkl";
 const long  GMT_OFFSET_SEC = 10 * 3600;
 const int   DAYLIGHT_OFFSET_SEC = 0;
 const char* NTP_SERVER = "pool.ntp.org";
 
-// ── R4 bridge ────────────────────────────────────────────────────
+// R4 bridge
 const char* AP_SSID = "ESP32_AP";
 const char* AP_PASS = "12345678";
 const int   TCP_PORT = 8080;
 WiFiServer  r4Server(TCP_PORT);
 WiFiClient  r4Client;
 
-// ── Flutter app bridge ───────────────────────────────────────────
+// Flutter app bridge 
 const int   FLUTTER_TCP_PORT = 8081;
 WiFiServer  flutterServer(FLUTTER_TCP_PORT);
 WiFiClient  flutterClient;
 
-// ── Non-blocking receive buffers ─────────────────────────────────
+// Non-blocking receive buffers
 String r4RxBuffer      = "";
 String flutterRxBuffer = "";
 
@@ -82,17 +82,19 @@ enum MenuState {
   APPLIANCE_SCHEDULE_SELECT,  // pick resume time for per-device smart delay
   APPLIANCE_TOGGLE_CONFIRM,   // confirm turning an OFF device back ON
   ALERT_INTRO,
-  ALERT_PROMPT,
+  ALERT_PROMPT,               // swipe to confirm
+  ALERT_SELECT,               // shown after swipe — SEL=Act CAN=Skip
   CANCEL_PROMPT,
+  MODE_SELECT_HINT,           // brief rotary hint before mode selection
   MODE_SELECT,
   MODE_CANCEL_PROMPT,
   GLOBAL_SCHEDULE
 };
 MenuState currentMenuState = HOME_PAGE;
 
-// ============================================================
+
 // Grove LCD RGB Backlight compatibility layer (v3.0 / v4.0 / v5.0)
-// ============================================================
+
 static uint8_t LCD_RGB_ADDR = 0x62;
 
 bool i2cProbe(uint8_t addr) {
@@ -132,7 +134,7 @@ Appliance apps[3] = {
   {"Light",     8.2, 1, -1}
 };
 
-// R4 device name matching apps[] order
+// R4 device
 const char* R4_DEVICE[] = { "fan", "buzzer", "led" };
 
 const int NUM_TIMES = 5;
@@ -175,14 +177,24 @@ unsigned long lastHomeToggle = 0;
 
 unsigned long alertIntroStart = 0;
 const unsigned long ALERT_INTRO_DURATION = 2500;
+unsigned long modeHintStart = 0;
+const unsigned long MODE_HINT_DURATION = 2000;
 
 bool alertShowSwipe = true;
 unsigned long lastAlertToggle = 0;
 const unsigned long ALERT_PHASE_DURATION = 5000;
 
+// Swipe gesture: simple proximity trigger with cooldown
+const int   SWIPE_DIST_CM   = 200;         // detect within 200 cm
+unsigned long lastSwipeTrigger = 0;
+const unsigned long SWIPE_COOLDOWN_MS = 1500; // re-arm delay after trigger
+int alertBtnClickCount = 0;           // must triple-click SELECT to confirm alert
+unsigned long alertBtnLastClick = 0;  // timestamp of last click (for combo window)
+const unsigned long ALERT_BTN_WINDOW = 600; // ms — clicks must be within this window
+
 bool wifiReady = false;
 
-// ================= R4 Communication =================
+// R4 Communication 
 
 void sendCommandToR4(const String& cmd, const String& val) {
   if (!r4Client || !r4Client.connected()) {
@@ -207,7 +219,7 @@ void syncDeviceStatesToR4() {
   }
 }
 
-// ── NEW: send a full status snapshot to Flutter ──────────────────
+// send a full status snapshot to Flutter
 // Called when Flutter connects so the app starts with correct state.
 void sendStatusToFlutter() {
   if (!flutterClient || !flutterClient.connected()) return;
@@ -229,7 +241,7 @@ void sendStatusToFlutter() {
   flutterClient.print(out);
 }
 
-// ── NEW: handle command received from Flutter app ────────────────
+// handle command received from Flutter app
 void onFlutterCommand(const String& line) {
   StaticJsonDocument<128> doc;
   if (deserializeJson(doc, line) != DeserializationError::Ok) return;
@@ -290,7 +302,7 @@ void onR4Data(const String& raw) {
     Serial.printf("  Buz=%.1fmW", doc["buzzer"]["p"].as<float>());
   Serial.println();
 
-  // ── NEW: forward R4 JSON verbatim to Flutter ─────────────────
+  // forward R4 JSON verbatim to Flutter
   if (flutterClient && flutterClient.connected()) {
     flutterClient.println(raw);
   }
@@ -301,7 +313,7 @@ void onR4Data(const String& raw) {
   }
 }
 
-// ================= Utilities =================
+// Utilities
 
 int findPeakAppliance() {
   int idx = 0;
@@ -345,6 +357,8 @@ void enterAlertPrompt() {
   currentMenuState = ALERT_PROMPT;
   alertShowSwipe = true;
   lastAlertToggle = millis();
+  alertBtnClickCount = 0;
+  lastSwipeTrigger = 0; // re-arm so next pass-by triggers immediately
 }
 
 int simHourNow() {
@@ -429,7 +443,7 @@ void applyPageBackground() {
   else if (currentState == ECO_MODE)   setRGB_v4(255, 140, 0);
 }
 
-// ================= LCD Rendering =================
+// LCD Rendering
 void updateLCDDisplay() {
   applyPageBackground();
   lcd.clear();
@@ -455,23 +469,7 @@ void updateLCDDisplay() {
       lcd.print(timeStr);
 
       lcd.setCursor(0, 1);
-      if (!homeShowAltScreen) {
-        lcd.print("B1 -> List");
-      } else {
-        if (currentState == ECO_MODE) {
-          int onC = 0, ecoC = 0;
-          for (int i = 0; i < 3; i++) {
-            if (apps[i].state == 1) onC++;
-            else if (apps[i].state == 2 || apps[i].state == 3) ecoC++;
-          }
-          lcd.print("Run:"); lcd.print(onC);
-          lcd.print(" Saving:"); lcd.print(ecoC);
-        } else {
-          int activeCount = 0;
-          for (int i = 0; i < 3; i++) if (apps[i].state == 1) activeCount++;
-          lcd.print("Running: "); lcd.print(activeCount);
-        }
-      }
+      lcd.print("SELECT -> List");
       break;
     }
 
@@ -486,19 +484,30 @@ void updateLCDDisplay() {
       lcd.print(" ");
       lcd.print(computeTotalPowerOn(), 1);
       lcd.print("W");
-
       lcd.setCursor(0, 1);
-      if (alertShowSwipe) {
-        lcd.print("Swipe to Confirm");
-      } else {
-        lcd.print("B1=Act  B2=Skip");
-      }
+      lcd.print("Swipe to Confirm");
+      break;
+    }
+
+    case ALERT_SELECT: {
+      lcd.setCursor(0, 0);
+      lcd.print(apps[peakApplianceIndex].name);
+      lcd.print(" ");
+      lcd.print(computeTotalPowerOn(), 1);
+      lcd.print("W");
+      lcd.setCursor(0, 1);
+      lcd.print("SEL=Act CAN=Skip");
       break;
     }
 
     case CANCEL_PROMPT:
       lcd.setCursor(0, 0); lcd.print("Ignore Alert?");
-      lcd.setCursor(0, 1); lcd.print("YES(B1) NO(B2)");
+      lcd.setCursor(0, 1); lcd.print("YES(SEL) NO(CAN)");
+      break;
+
+    case MODE_SELECT_HINT:
+      lcd.setCursor(0, 0); lcd.print("Select a Mode:");
+      lcd.setCursor(0, 1); lcd.print("Use rotary knob");
       break;
 
     case MODE_SELECT:
@@ -510,7 +519,7 @@ void updateLCDDisplay() {
 
     case MODE_CANCEL_PROMPT:
       lcd.setCursor(0, 0); lcd.print("Back to Alert?");
-      lcd.setCursor(0, 1); lcd.print("YES(B1) NO(B2)");
+      lcd.setCursor(0, 1); lcd.print("YES(SEL) NO(CAN)");
       break;
 
     case GLOBAL_SCHEDULE: {
@@ -590,13 +599,13 @@ void updateLCDDisplay() {
       else if (apps[scrollIndex].state == 3) lcd.print(" [DEL]");
       else                                   lcd.print(" [OFF]");
       lcd.setCursor(0, 1);
-      if (apps[scrollIndex].state == 0) lcd.print("ON?   B1=Y B2=N");
-      else                              lcd.print("OFF?  B1=Y B2=N");
+      if (apps[scrollIndex].state == 0) lcd.print("ON?  SEL=Y CAN=N");
+      else                              lcd.print("OFF? SEL=Y CAN=N");
       break;
   }
 }
 
-// ================= State Machine =================
+// State Machine
 void handleConfirm() {
   switch (currentMenuState) {
 
@@ -655,8 +664,23 @@ void handleConfirm() {
       currentMenuState = APPLIANCE_LIST;
       break;
 
-    case ALERT_PROMPT:
-      currentMenuState = MODE_SELECT;
+    case ALERT_PROMPT: {
+      // hidden backup: triple-click SELECT skips the swipe step
+      unsigned long now = millis();
+      if (now - alertBtnLastClick > ALERT_BTN_WINDOW) alertBtnClickCount = 0;
+      alertBtnLastClick = now;
+      alertBtnClickCount++;
+      if (alertBtnClickCount >= 3) {
+        alertBtnClickCount = 0;
+        currentMenuState = MODE_SELECT;
+      }
+      break;
+    }
+
+    case ALERT_SELECT:
+      // single SELECT after swipe → show rotary hint, then mode choice
+      modeHintStart = millis();
+      currentMenuState = MODE_SELECT_HINT;
       break;
 
     case CANCEL_PROMPT:
@@ -706,6 +730,11 @@ void handleCancel() {
       currentMenuState = CANCEL_PROMPT;
       break;
 
+    case ALERT_SELECT:
+      // CANCEL on the post-swipe screen → back to swipe prompt
+      enterAlertPrompt();
+      break;
+
     case CANCEL_PROMPT:
       enterAlertPrompt();
       break;
@@ -741,7 +770,7 @@ void handleCancel() {
   updateLCDDisplay();
 }
 
-// ================= Input Scanning =================
+// Input Scanning
 void checkPhysicalUI() {
   int c1 = digitalRead(BTN_1_PIN);
   int c2 = digitalRead(BTN_2_PIN);
@@ -803,7 +832,7 @@ void checkPhysicalUI() {
   }
 }
 
-// ================= Setup / Loop =================
+// Setup / Loop
 void setup() {
   Serial.begin(115200);
   pinMode(LED_R, OUTPUT); pinMode(LED_Y, OUTPUT); pinMode(LED_G, OUTPUT);
@@ -827,7 +856,7 @@ void setup() {
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3000) delay(200);
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(200);
   if (WiFi.status() == WL_CONNECTED) {
     wifiReady = true;
     configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
@@ -849,7 +878,7 @@ void setup() {
 }
 
 void loop() {
-  // ── R4 TCP: accept new connection ────────────────────────────
+  //R4 TCP: accept new connection
   if (!r4Client || !r4Client.connected()) {
     WiFiClient c = r4Server.accept();
     if (c) {
@@ -860,7 +889,7 @@ void loop() {
     }
   }
 
-  // ── R4 TCP: receive power data (non-blocking) ────────────────
+  //R4 TCP: receive power data (non-blocking)
   while (r4Client && r4Client.connected() && r4Client.available()) {
     char c = r4Client.read();
     if (c == '\n') {
@@ -926,7 +955,7 @@ void loop() {
     }
   }
 
-  // ── Existing loop logic (unchanged) ──────────────────────────
+  // Existing loop logic
   checkPhysicalUI();
   unsigned long ms = millis();
 
@@ -944,6 +973,12 @@ void loop() {
     updateLCDDisplay();
   }
 
+  if (currentMenuState == MODE_SELECT_HINT
+      && ms - modeHintStart > MODE_HINT_DURATION) {
+    currentMenuState = MODE_SELECT;
+    updateLCDDisplay();
+  }
+
   if (currentMenuState == ALERT_PROMPT && !btn2IsHolding
       && ms - lastAlertToggle > ALERT_PHASE_DURATION) {
     lastAlertToggle = ms;
@@ -957,13 +992,18 @@ void loop() {
     digitalWrite(ULTRA_SIG, HIGH); delayMicroseconds(10);
     digitalWrite(ULTRA_SIG, LOW);
     pinMode(ULTRA_SIG, INPUT);
-    long dur = pulseIn(ULTRA_SIG, HIGH, 20000);
-    if (dur > 0 && (dur / 58) < 30) {
+    long dur = pulseIn(ULTRA_SIG, HIGH, 12000); // 12000 µs ≈ 200 cm max
+    bool objectClose = (dur > 0 && (dur / 58) < SWIPE_DIST_CM);
+    unsigned long swipeNow = millis();
+
+    if (objectClose && swipeNow - lastSwipeTrigger > SWIPE_COOLDOWN_MS) {
+      lastSwipeTrigger = swipeNow;
+      // Flash red to confirm swipe detected
       for (int i = 0; i < 3; i++) {
         setRGB_v4(0, 0, 0);   delay(120);
         setRGB_v4(255, 0, 0); delay(120);
       }
-      currentMenuState = MODE_SELECT;
+      currentMenuState = ALERT_SELECT;
       updateLCDDisplay();
       delay(500);
     }
@@ -984,12 +1024,7 @@ void loop() {
     updateLCDDisplay();
   }
 
-  if (currentMenuState == HOME_PAGE && !btn2IsHolding
-      && ms - lastHomeToggle > 2000) {
-    lastHomeToggle = ms;
-    homeShowAltScreen = !homeShowAltScreen;
-    updateLCDDisplay();
-  }
+  // home page no longer auto-rotates; stays on "B1 -> List"
 
   delay(10);
 }
