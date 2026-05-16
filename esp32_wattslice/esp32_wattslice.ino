@@ -28,6 +28,7 @@
  */
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <Wire.h>
 #include "rgb_lcd.h"
 #include <time.h>
@@ -873,6 +874,12 @@ void setup() {
 
   flutterServer.begin();
   Serial.println("Flutter TCP server on port " + String(FLUTTER_TCP_PORT));
+
+  // Advertise as wattslice.local on all active interfaces
+  if (MDNS.begin("wattslice")) {
+    MDNS.addService("wattslice", "tcp", FLUTTER_TCP_PORT);
+    Serial.println("mDNS: wattslice.local");
+  }
 
   updateLCDDisplay();
 }
