@@ -43,3 +43,5 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Force-include Windows release build
+!/build/windows/x64/runner/Release/
