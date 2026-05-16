@@ -8,7 +8,7 @@ import 'screens/home_screen.dart';
 import 'screens/devices_screen.dart';
 import 'screens/weekly_insights_screen.dart';
 import 'screens/connect_provider_screen.dart';
-import 'screens/onboarding_screen.dart';
+import 'screens/connecting_screen.dart';
 
 void main() {
   runApp(const WattSliceApp());
@@ -65,7 +65,7 @@ class WattSliceApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const MainNavigationScreen(),
+        home: const ConnectingScreen(),
       ),
     );
   }
