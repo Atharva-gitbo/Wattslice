@@ -29,6 +29,7 @@
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <WiFiUdp.h>
 #include <Wire.h>
 #include "rgb_lcd.h"
 #include <time.h>
@@ -194,6 +195,10 @@ unsigned long alertBtnLastClick = 0;  // timestamp of last click (for combo wind
 const unsigned long ALERT_BTN_WINDOW = 600; // ms — clicks must be within this window
 
 bool wifiReady = false;
+
+WiFiUDP    udpBeacon;
+const int  BEACON_UDP_PORT = 5556;
+unsigned long lastBeacon   = 0;
 
 // R4 Communication 
 
@@ -881,6 +886,10 @@ void setup() {
     Serial.println("mDNS: wattslice.local");
   }
 
+  // UDP beacon so Flutter app auto-discovers on any network
+  udpBeacon.begin(BEACON_UDP_PORT);
+  Serial.println("UDP beacon on port " + String(BEACON_UDP_PORT));
+
   updateLCDDisplay();
 }
 
@@ -1032,6 +1041,14 @@ void loop() {
   }
 
   // home page no longer auto-rotates; stays on "B1 -> List"
+
+  // Broadcast UDP beacon every 2s so Flutter app can auto-discover
+  if (millis() - lastBeacon >= 2000) {
+    lastBeacon = millis();
+    udpBeacon.beginPacket("255.255.255.255", BEACON_UDP_PORT);
+    udpBeacon.print("wattslice");
+    udpBeacon.endPacket();
+  }
 
   delay(10);
 }

@@ -14,28 +14,71 @@ class EspTcpService extends ChangeNotifier {
   Timer? _reconnectTimer;
   String _rxBuffer = '';
 
-  // Live R4 power readings (mW from INA226)
   double fanPowerMw = 0.0;
   double buzzerPowerMw = 0.0;
   double ledPowerMw = 0.0;
 
-  // ESP32 system mode echoed back in R4 data
   String espMode = 'normal';
 
-  // Callback for AppState to process incoming data
   Function(Map<String, dynamic>)? onDataReceived;
 
-  EspTcpService({this.espIp = 'wattslice.local', this.espPort = 8081});
+  static const int _beaconPort = 5556;
+  static const String _fallbackIp = '192.168.4.1';
+
+  EspTcpService({this.espIp = _fallbackIp, this.espPort = 8081});
 
   bool get isConnected => _isConnected;
   String get statusMessage => _statusMessage;
+
+  // Listen for ESP32 UDP beacon and return its IP, or null on timeout.
+  Future<String?> _discover() async {
+    try {
+      final sock = await RawDatagramSocket.bind(
+          InternetAddress.anyIPv4, _beaconPort);
+      sock.broadcastEnabled = true;
+      final completer = Completer<String?>();
+      final timer = Timer(const Duration(seconds: 3), () {
+        sock.close();
+        if (!completer.isCompleted) completer.complete(null);
+      });
+      sock.listen((event) {
+        if (event == RawSocketEvent.read) {
+          final dg = sock.receive();
+          if (dg != null &&
+              String.fromCharCodes(dg.data).trim() == 'wattslice') {
+            timer.cancel();
+            sock.close();
+            if (!completer.isCompleted) {
+              completer.complete(dg.address.address);
+            }
+          }
+        }
+      });
+      return completer.future;
+    } catch (e) {
+      log('UDP discover error: $e');
+      return null;
+    }
+  }
 
   Future<void> connect() async {
     if (_isConnected) return;
     _reconnectTimer?.cancel();
 
+    _statusMessage = 'Searching for WattSlice Hub…';
+    notifyListeners();
+
+    // Try UDP auto-discovery first
+    final discovered = await _discover();
+    if (discovered != null) {
+      espIp = discovered;
+      log('TCP: Discovered ESP32 at $espIp');
+    } else {
+      log('TCP: Discovery timed out — trying $espIp');
+    }
+
     try {
-      _statusMessage = 'Connecting...';
+      _statusMessage = 'Connecting…';
       notifyListeners();
       log('TCP: Connecting to $espIp:$espPort');
 
@@ -61,7 +104,7 @@ class EspTcpService extends ChangeNotifier {
       );
     } catch (e) {
       log('TCP: Connect failed: $e');
-      _statusMessage = 'Offline — retrying...';
+      _statusMessage = 'Offline — retrying…';
       _isConnected = false;
       notifyListeners();
       _scheduleReconnect();
@@ -108,7 +151,6 @@ class EspTcpService extends ChangeNotifier {
     _reconnectTimer = Timer(const Duration(seconds: 5), connect);
   }
 
-  // Send {"cmd":"...","value":"..."}\n to the ESP32
   void sendCommand(String cmd, String value) {
     if (!_isConnected || _socket == null) {
       log('TCP: Cannot send, not connected');
@@ -119,14 +161,12 @@ class EspTcpService extends ChangeNotifier {
     _socket!.write(msg);
   }
 
-  // Toggle a device by index (0=fan, 1=buzzer, 2=led)
   void setDevice(int index, bool on) {
     const keys = ['fan', 'buzzer', 'led'];
     if (index < 0 || index >= keys.length) return;
     sendCommand(keys[index], on ? 'on' : 'off');
   }
 
-  // Send a mode command: 'eco', 'smart_delay', or 'normal'
   void setMode(String mode) {
     sendCommand('mode', mode);
     espMode = mode;
